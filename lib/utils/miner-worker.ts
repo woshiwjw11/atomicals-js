@@ -1,151 +1,90 @@
+"use strict";
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.appendMintUpdateRevealScript = exports.workerPrepareCommitRevealConfig = void 0;
 /**
 This file was created by the user:
 https://github.com/danieleth2/atomicals-js/commit/02e854cc71c0f6c6559ff35c2093dc8d526b5d72
 */
-import { parentPort } from "worker_threads";
-import { KeyPairInfo, getKeypairInfo } from "./address-keypair-path";
-import { script, payments } from "bitcoinjs-lib";
-import { BitworkInfo, hasValidBitwork } from "./atomical-format-helpers";
-import * as ecc from "tiny-secp256k1";
-import { ECPairFactory, ECPairAPI, TinySecp256k1Interface } from "ecpair";
-
-const tinysecp: TinySecp256k1Interface = require("tiny-secp256k1");
+const worker_threads_1 = require("worker_threads");
+const address_keypair_path_1 = require("./address-keypair-path");
+const bitcoinjs_lib_1 = require("bitcoinjs-lib");
+const atomical_format_helpers_1 = require("./atomical-format-helpers");
+const ecc = require("tiny-secp256k1");
+const ecpair_1 = require("ecpair");
+const tinysecp = require("tiny-secp256k1");
 const bitcoin = require("bitcoinjs-lib");
-import * as chalk from "chalk";
-
+const chalk = require("chalk");
 bitcoin.initEccLib(ecc);
-import { initEccLib, networks, Psbt } from "bitcoinjs-lib";
-
-initEccLib(tinysecp as any);
-import {
-    AtomicalsPayload,
-    NETWORK,
-    RBF_INPUT_SEQUENCE,
-} from "../commands/command-helpers";
-import {
-    AtomicalOperationBuilderOptions,
-    DUST_AMOUNT,
-    EXCESSIVE_FEE_LIMIT,
-    FeeCalculations,
-    MAX_SEQUENCE,
-    OUTPUT_BYTES_BASE,
-} from "./atomical-operation-builder";
-import { Worker } from "worker_threads";
-import { ATOMICALS_PROTOCOL_ENVELOPE_ID } from "../types/protocol-tags";
-import { chunkBuffer } from "./file-utils";
-
-const ECPair: ECPairAPI = ECPairFactory(tinysecp);
-
-interface WorkerInput {
-    copiedData: AtomicalsPayload;
-    seqStart: number;
-    seqEnd: number;
-    workerOptions: AtomicalOperationBuilderOptions;
-    fundingWIF: string;
-    fundingUtxo: any;
-    fees: FeeCalculations;
-    performBitworkForCommitTx: boolean;
-    workerBitworkInfoCommit: BitworkInfo;
-    iscriptP2TR: any;
-    ihashLockP2TR: any;
-}
-
+const bitcoinjs_lib_2 = require("bitcoinjs-lib");
+(0, bitcoinjs_lib_2.initEccLib)(tinysecp);
+const command_helpers_1 = require("../commands/command-helpers");
+const atomical_operation_builder_1 = require("./atomical-operation-builder");
+const protocol_tags_1 = require("../types/protocol-tags");
+const file_utils_1 = require("./file-utils");
+const ECPair = (0, ecpair_1.ECPairFactory)(tinysecp);
+// 在文件顶部添加一个变量来跟踪这个工作线程计算的nonce数量
+let nonceCount = 0;
 // This is the worker's message event listener
-if (parentPort) {
-    parentPort.on("message", async (message: WorkerInput) => {
+if (worker_threads_1.parentPort) {
+    worker_threads_1.parentPort.on("message", (message) => __awaiter(void 0, void 0, void 0, function* () {
         // Extract parameters from the message
-        const {
-            copiedData,
-            seqStart,
-            seqEnd,
-            workerOptions,
-            fundingWIF,
-            fundingUtxo,
-            fees,
-            performBitworkForCommitTx,
-            workerBitworkInfoCommit,
-            iscriptP2TR,
-            ihashLockP2TR,
-        } = message;
-
+        const { copiedData, seqStart, seqEnd, workerOptions, fundingWIF, fundingUtxo, fees, performBitworkForCommitTx, workerBitworkInfoCommit, iscriptP2TR, ihashLockP2TR, } = message;
         let sequence = seqStart;
         let workerPerformBitworkForCommitTx = performBitworkForCommitTx;
         let scriptP2TR = iscriptP2TR;
         let hashLockP2TR = ihashLockP2TR;
-
         const fundingKeypairRaw = ECPair.fromWIF(fundingWIF);
-        const fundingKeypair = getKeypairInfo(fundingKeypairRaw);
-
+        const fundingKeypair = (0, address_keypair_path_1.getKeypairInfo)(fundingKeypairRaw);
         copiedData["args"]["nonce"] = Math.floor(Math.random() * 10000000);
         copiedData["args"]["time"] = Math.floor(Date.now() / 1000);
-
-        let atomPayload = new AtomicalsPayload(copiedData);
-
-        let updatedBaseCommit: { scriptP2TR; hashLockP2TR; hashscript } =
-            workerPrepareCommitRevealConfig(
-                workerOptions.opType,
-                fundingKeypair,
-                atomPayload
-            );
-
-        const tabInternalKey = Buffer.from(
-            fundingKeypair.childNodeXOnlyPubkey as number[]
-        );
+        let atomPayload = new command_helpers_1.AtomicalsPayload(copiedData);
+        let updatedBaseCommit = (0, exports.workerPrepareCommitRevealConfig)(workerOptions.opType, fundingKeypair, atomPayload);
+        const tabInternalKey = Buffer.from(fundingKeypair.childNodeXOnlyPubkey);
         const witnessUtxo = {
             value: fundingUtxo.value,
             script: Buffer.from(fundingKeypair.output, "hex"),
         };
-
         const totalInputsValue = fundingUtxo.value;
         const totalOutputsValue = getOutputValueForCommit(fees);
         const calculatedFee = totalInputsValue - totalOutputsValue;
-
         let needChangeFeeOutput = false;
         // In order to keep the fee-rate unchanged, we should add extra fee for the new added change output.
-        const expectedFee =
-            fees.commitFeeOnly +
-            (workerOptions.satsbyte as any) * OUTPUT_BYTES_BASE;
+        const expectedFee = fees.commitFeeOnly +
+            workerOptions.satsbyte * atomical_operation_builder_1.OUTPUT_BYTES_BASE;
         // console.log('expectedFee', expectedFee);
-        const differenceBetweenCalculatedAndExpected =
-            calculatedFee - expectedFee;
-        if (
-            calculatedFee > 0 &&
+        const differenceBetweenCalculatedAndExpected = calculatedFee - expectedFee;
+        if (calculatedFee > 0 &&
             differenceBetweenCalculatedAndExpected > 0 &&
-            differenceBetweenCalculatedAndExpected >= DUST_AMOUNT
-        ) {
+            differenceBetweenCalculatedAndExpected >= atomical_operation_builder_1.DUST_AMOUNT) {
             // There were some excess satoshis, but let's verify that it meets the dust threshold to make change
             needChangeFeeOutput = true;
         }
-
         let prelimTx;
         let fixedOutput = {
             address: updatedBaseCommit.scriptP2TR.address,
             value: getOutputValueForCommit(fees),
         };
         let finalCopyData, finalPrelimTx, finalSequence;
-
         // Start mining loop, terminates when a valid proof of work is found or stopped manually
         do {
             // Introduce a minor delay to avoid overloading the CPU
-            // await sleep(0);
-
+            yield sleep(0);
             // This worker has tried all assigned sequence range but it did not find solution.
             if (sequence > seqEnd) {
                 finalSequence = -1;
             }
-            if (sequence % 10000 == 0) {
-                console.log(
-                    "Started mining for sequence: " +
-                        sequence +
-                        " - " +
-                        Math.min(sequence + 10000, MAX_SEQUENCE)
-                );
-            }
-
             // Create a new PSBT (Partially Signed Bitcoin Transaction)
-            let psbtStart = new Psbt({ network: NETWORK });
+            let psbtStart = new bitcoinjs_lib_2.Psbt({ network: command_helpers_1.NETWORK });
             psbtStart.setVersion(1);
-
             // Add input and output to PSBT
             psbtStart.addInput({
                 hash: fundingUtxo.txid,
@@ -155,7 +94,6 @@ if (parentPort) {
                 witnessUtxo: witnessUtxo,
             });
             psbtStart.addOutput(fixedOutput);
-
             // Add change output if needed
             if (needChangeFeeOutput) {
                 psbtStart.addOutput({
@@ -163,74 +101,46 @@ if (parentPort) {
                     value: differenceBetweenCalculatedAndExpected,
                 });
             }
-
             psbtStart.signInput(0, fundingKeypair.tweakedChildNode);
             psbtStart.finalizeAllInputs();
-
             // Extract the transaction and get its ID
             prelimTx = psbtStart.extractTransaction();
             const checkTxid = prelimTx.getId();
-
             // Check if there is a valid proof of work
-            if (
-                workerPerformBitworkForCommitTx &&
-                hasValidBitwork(
-                    checkTxid,
-                    workerBitworkInfoCommit?.prefix as any,
-                    workerBitworkInfoCommit?.ext as any
-                )
-            ) {
+            if (workerPerformBitworkForCommitTx &&
+                (0, atomical_format_helpers_1.hasValidBitwork)(checkTxid, workerBitworkInfoCommit === null || workerBitworkInfoCommit === void 0 ? void 0 : workerBitworkInfoCommit.prefix, workerBitworkInfoCommit === null || workerBitworkInfoCommit === void 0 ? void 0 : workerBitworkInfoCommit.ext)) {
                 // Valid proof of work found, log success message
-                console.log(
-                    chalk.green(prelimTx.getId(), ` sequence: (${sequence})`)
-                );
-                console.log(
-                    "\nBitwork matches commit txid! ",
-                    prelimTx.getId(),
-                    `@ time: ${Math.floor(Date.now() / 1000)}`
-                );
-
+                console.log(chalk.green(prelimTx.getId(), ` sequence: (${sequence})`));
+                console.log("\nBitwork matches commit txid! ", prelimTx.getId(), `@ time: ${Math.floor(Date.now() / 1000)}`);
                 finalCopyData = copiedData;
                 finalPrelimTx = prelimTx;
                 finalSequence = sequence;
                 workerPerformBitworkForCommitTx = false;
                 break;
             }
-
             sequence++;
+			nonceCount++;
         } while (workerPerformBitworkForCommitTx);
-
         if (finalSequence && finalSequence != -1) {
             // send a result or message back to the main thread
-            console.log(
-                "got one finalCopyData:" + JSON.stringify(finalCopyData)
-            );
-            console.log(
-                "got one finalPrelimTx:" + JSON.stringify(finalPrelimTx)
-            );
+            console.log("got one finalCopyData:" + JSON.stringify(finalCopyData));
+            console.log("got one finalPrelimTx:" + JSON.stringify(finalPrelimTx));
             console.log("got one finalSequence:" + JSON.stringify(sequence));
-
-            parentPort!.postMessage({
+            worker_threads_1.parentPort.postMessage({
                 finalCopyData,
                 finalSequence: sequence,
+				type: 'mined',
             });
+			clearInterval(nonceCounterInterval);
         }
-    });
+    }));
 }
-
-function getOutputValueForCommit(fees: FeeCalculations): number {
+function getOutputValueForCommit(fees) {
     let sum = 0;
     // Note that `Additional inputs` refers to the additional inputs in a reveal tx.
     return fees.revealFeePlusOutputs - sum;
 }
-
-function addCommitChangeOutputIfRequired(
-    extraInputValue: number,
-    fee: FeeCalculations,
-    pbst: any,
-    address: string,
-    satsbyte: any
-) {
+function addCommitChangeOutputIfRequired(extraInputValue, fee, pbst, address, satsbyte) {
     const totalInputsValue = extraInputValue;
     const totalOutputsValue = getOutputValueForCommit(fee);
     const calculatedFee = totalInputsValue - totalOutputsValue;
@@ -239,45 +149,23 @@ function addCommitChangeOutputIfRequired(
         return;
     }
     // In order to keep the fee-rate unchanged, we should add extra fee for the new added change output.
-    const expectedFee =
-        fee.commitFeeOnly + (satsbyte as any) * OUTPUT_BYTES_BASE;
+    const expectedFee = fee.commitFeeOnly + satsbyte * atomical_operation_builder_1.OUTPUT_BYTES_BASE;
     // console.log('expectedFee', expectedFee);
     const differenceBetweenCalculatedAndExpected = calculatedFee - expectedFee;
     if (differenceBetweenCalculatedAndExpected <= 0) {
         return;
     }
     // There were some excess satoshis, but let's verify that it meets the dust threshold to make change
-    if (differenceBetweenCalculatedAndExpected >= DUST_AMOUNT) {
+    if (differenceBetweenCalculatedAndExpected >= atomical_operation_builder_1.DUST_AMOUNT) {
         pbst.addOutput({
             address: address,
             value: differenceBetweenCalculatedAndExpected,
         });
     }
 }
-
-export const workerPrepareCommitRevealConfig = (
-    opType:
-        | "nft"
-        | "ft"
-        | "dft"
-        | "dmt"
-        | "sl"
-        | "x"
-        | "y"
-        | "mod"
-        | "evt"
-        | "dat",
-    keypair: KeyPairInfo,
-    atomicalsPayload: AtomicalsPayload,
-    log = true
-) => {
-    const revealScript = appendMintUpdateRevealScript(
-        opType,
-        keypair,
-        atomicalsPayload,
-        log
-    );
-    const hashscript = script.fromASM(revealScript);
+const workerPrepareCommitRevealConfig = (opType, keypair, atomicalsPayload, log = true) => {
+    const revealScript = (0, exports.appendMintUpdateRevealScript)(opType, keypair, atomicalsPayload, log);
+    const hashscript = bitcoinjs_lib_1.script.fromASM(revealScript);
     const scriptTree = {
         output: hashscript,
     };
@@ -287,17 +175,16 @@ export const workerPrepareCommitRevealConfig = (
         redeemVersion: 192,
     };
     const buffer = Buffer.from(keypair.childNodeXOnlyPubkey);
-    const scriptP2TR = payments.p2tr({
+    const scriptP2TR = bitcoinjs_lib_1.payments.p2tr({
         internalPubkey: buffer,
         scriptTree,
-        network: NETWORK,
+        network: command_helpers_1.NETWORK,
     });
-
-    const hashLockP2TR = payments.p2tr({
+    const hashLockP2TR = bitcoinjs_lib_1.payments.p2tr({
         internalPubkey: buffer,
         scriptTree,
         redeem: hashLockRedeem,
-        network: NETWORK,
+        network: command_helpers_1.NETWORK,
     });
     return {
         scriptP2TR,
@@ -305,38 +192,26 @@ export const workerPrepareCommitRevealConfig = (
         hashscript,
     };
 };
-
-export const appendMintUpdateRevealScript = (
-    opType:
-        | "nft"
-        | "ft"
-        | "dft"
-        | "dmt"
-        | "sl"
-        | "x"
-        | "y"
-        | "mod"
-        | "evt"
-        | "dat",
-    keypair: KeyPairInfo,
-    payload: AtomicalsPayload,
-    log: boolean = true
-) => {
-    let ops = `${Buffer.from(keypair.childNodeXOnlyPubkey, "utf8").toString(
-        "hex"
-    )} OP_CHECKSIG OP_0 OP_IF `;
-    ops += `${Buffer.from(ATOMICALS_PROTOCOL_ENVELOPE_ID, "utf8").toString(
-        "hex"
-    )}`;
+exports.workerPrepareCommitRevealConfig = workerPrepareCommitRevealConfig;
+const appendMintUpdateRevealScript = (opType, keypair, payload, log = true) => {
+    let ops = `${Buffer.from(keypair.childNodeXOnlyPubkey, "utf8").toString("hex")} OP_CHECKSIG OP_0 OP_IF `;
+    ops += `${Buffer.from(protocol_tags_1.ATOMICALS_PROTOCOL_ENVELOPE_ID, "utf8").toString("hex")}`;
     ops += ` ${Buffer.from(opType, "utf8").toString("hex")}`;
-    const chunks = chunkBuffer(payload.cbor(), 520);
+    const chunks = (0, file_utils_1.chunkBuffer)(payload.cbor(), 520);
     for (let chunk of chunks) {
         ops += ` ${chunk.toString("hex")}`;
     }
     ops += ` OP_ENDIF`;
     return ops;
 };
-
-function sleep(ms: number) {
+exports.appendMintUpdateRevealScript = appendMintUpdateRevealScript;
+function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+let nonceCounterInterval = setInterval(() => {
+    if (worker_threads_1.parentPort) {
+        worker_threads_1.parentPort.postMessage({ type: 'nonceCount', nonceCount: nonceCount });
+    }
+    nonceCount = 0; // 重置计数器
+}, 5000);
